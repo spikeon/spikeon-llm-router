@@ -85,6 +85,32 @@ def _ollama_kwargs(request: "ChatRequest", model_name: str, messages: list, stre
     return kwargs
 
 
+_VERIFY_SYSTEM = """You are a completion verifier. Compare the original request against the task responses below.
+Output format (be concise):
+✓ Completed: [bullet list of what was done]
+✗ Missed: [anything not addressed, or "nothing"]
+VERDICT: Complete / Incomplete"""
+
+
+def _verify_completion(original_prompt: str, accumulated: list[tuple[str, str]]) -> str:
+    parts = [f"ORIGINAL REQUEST:\n{original_prompt}\n\nTASK RESPONSES:"]
+    for i, (task, resp) in enumerate(accumulated, 1):
+        parts.append(f"\nTask {i} — {task}\n{resp[:600]}")
+    verify_messages = [
+        {"role": "system", "content": _VERIFY_SYSTEM},
+        {"role": "user", "content": "\n".join(parts)},
+    ]
+    try:
+        resp = ollama_client.chat.completions.create(
+            model=MODELS["fast"]["name"],
+            messages=verify_messages,
+            stream=False,
+        )
+        return resp.choices[0].message.content or ""
+    except Exception as e:
+        return f"(verify failed: {e})"
+
+
 def run_decomposed(tasks: list[str], base_messages: list, request: "ChatRequest") -> dict:
     """Run decomposed tasks sequentially, passing accumulated context forward.
 
@@ -139,10 +165,21 @@ def run_decomposed(tasks: list[str], base_messages: list, request: "ChatRequest"
         print(f"  ✓ done in {elapsed:.1f}s")
         accumulated.append((task, choice.message.content or ""))
 
+    # --- Verify step ---
+    original_prompt = next(
+        (m["content"] for m in reversed(base_messages) if m["role"] == "user"), ""
+    )
+    print(f"\n[verify] comparing responses to original request...")
+    t0 = time.time()
+    verification = _verify_completion(original_prompt, accumulated)
+    print(f"  ✓ done in {time.time() - t0:.1f}s")
+    verdict_line = next((l for l in verification.splitlines() if "VERDICT" in l), "")
+    print(f"  {verdict_line}")
+
     print(f"\n{'='*60}")
     print(f"DECOMPOSE complete — {len(accumulated)} tasks in {time.time() - wall_start:.1f}s total")
     print(f"{'='*60}\n")
-    final = accumulated[-1][1] if accumulated else ""
+    final = (accumulated[-1][1] if accumulated else "") + "\n\n---\n" + verification
     return {
         "id": "decomposed-response",
         "object": "chat.completion",
