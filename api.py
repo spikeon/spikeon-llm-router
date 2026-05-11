@@ -3,7 +3,7 @@ from fastapi.responses import StreamingResponse
 from pydantic import BaseModel
 import json
 import openai
-from router import classify_prompt, is_frustrated
+from router import classify_prompt, is_frustrated, should_decompose, decompose_prompt
 from config import MODELS, OLLAMA_BASE_URL, CAVEMAN_SYSTEM_PROMPT
 from gemini_client import gemini_chat, gemini_stream
 
@@ -44,24 +44,9 @@ def get_last_real_prompt(messages: list) -> str | None:
 
 def stream_response(model_name: str, model_key: str, messages: list, request: "ChatRequest"):
     def generate():
-        kwargs = {"model": model_name, "messages": messages, "stream": True}
-        if request.tools:
-            kwargs["tools"] = request.tools
-        if request.tool_choice is not None:
-            kwargs["tool_choice"] = request.tool_choice
-        if request.temperature is not None:
-            kwargs["temperature"] = request.temperature
-        if request.max_tokens is not None:
-            kwargs["max_tokens"] = request.max_tokens
-        if request.top_p is not None:
-            kwargs["top_p"] = request.top_p
-        if request.stop is not None:
-            kwargs["stop"] = request.stop
-        if request.response_format is not None:
-            kwargs["response_format"] = request.response_format
-        if request.seed is not None:
-            kwargs["seed"] = request.seed
-        response = ollama_client.chat.completions.create(**kwargs)
+        response = ollama_client.chat.completions.create(
+            **_ollama_kwargs(request, model_name, messages, stream=True)
+        )
         for chunk in response:
             delta = chunk.choices[0].delta
             data = {
@@ -77,6 +62,81 @@ def stream_response(model_name: str, model_key: str, messages: list, request: "C
             yield f"data: {json.dumps(data)}\n\n"
         yield "data: [DONE]\n\n"
     return StreamingResponse(generate(), media_type="text/event-stream")
+
+def _ollama_kwargs(request: "ChatRequest", model_name: str, messages: list, stream: bool = False) -> dict:
+    kwargs = {"model": model_name, "messages": messages, "stream": stream}
+    if request.tools:
+        kwargs["tools"] = request.tools
+    if request.tool_choice is not None:
+        kwargs["tool_choice"] = request.tool_choice
+    if request.temperature is not None:
+        kwargs["temperature"] = request.temperature
+    if request.max_tokens is not None:
+        kwargs["max_tokens"] = request.max_tokens
+    if request.top_p is not None:
+        kwargs["top_p"] = request.top_p
+    if request.stop is not None:
+        kwargs["stop"] = request.stop
+    if request.response_format is not None:
+        kwargs["response_format"] = request.response_format
+    if request.seed is not None:
+        kwargs["seed"] = request.seed
+    return kwargs
+
+
+def run_decomposed(tasks: list[str], base_messages: list, request: "ChatRequest") -> dict:
+    """Run decomposed tasks sequentially, passing accumulated context forward.
+
+    Tools are forwarded to each subtask. If any subtask triggers a tool_calls
+    response, it is returned immediately so the client can execute and continue.
+    """
+    prefix = base_messages[:-1]  # everything except the original user message
+    accumulated: list[tuple[str, str]] = []  # (task, response) pairs
+
+    for i, task in enumerate(tasks):
+        # Build message list: prefix + interleaved prior task/response pairs + this task
+        task_messages = list(prefix)
+        for prev_task, prev_resp in accumulated:
+            task_messages.append({"role": "user", "content": prev_task})
+            task_messages.append({"role": "assistant", "content": prev_resp})
+        task_messages.append({"role": "user", "content": task})
+
+        model_key = classify_prompt(task)
+        print(f"→ [decomposed {i + 1}/{len(tasks)}] '{task[:50]}' → {model_key}")
+
+        if model_key == "gemini":
+            system = next((m["content"] for m in task_messages if m["role"] == "system"), CAVEMAN_SYSTEM_PROMPT)
+            history = [m for m in task_messages if m["role"] in ("user", "assistant")][:-1]
+            text = gemini_chat(task, system, history)
+            accumulated.append((task, text))
+            continue
+
+        model_name = MODELS.get(model_key, MODELS["smart"])["name"]
+        response = ollama_client.chat.completions.create(
+            **_ollama_kwargs(request, model_name, task_messages)
+        )
+        choice = response.choices[0]
+
+        if hasattr(choice.message, "tool_calls") and choice.message.tool_calls:
+            message = {"role": "assistant", "content": choice.message.content}
+            message["tool_calls"] = [tc.model_dump() for tc in choice.message.tool_calls]
+            return {
+                "id": response.id,
+                "object": "chat.completion",
+                "model": model_key,
+                "choices": [{"index": 0, "message": message, "finish_reason": choice.finish_reason}],
+            }
+
+        accumulated.append((task, choice.message.content or ""))
+
+    final = accumulated[-1][1] if accumulated else ""
+    return {
+        "id": "decomposed-response",
+        "object": "chat.completion",
+        "model": "auto-decomposed",
+        "choices": [{"index": 0, "message": {"role": "assistant", "content": final}, "finish_reason": "stop"}],
+    }
+
 
 @app.get("/v1/models")
 def list_models():
@@ -162,6 +222,20 @@ async def chat(request: ChatRequest):
                 messages[i]["content"] = last_prompt
                 break
 
+    # --- Task decomposition ---
+    # Only when: auto routing, not frustrated, not a tool continuation
+    in_tool_continuation = request.messages and request.messages[-1].role == "tool"
+    if (
+        not frustrated
+        and request.model == "auto"
+        and not in_tool_continuation
+        and should_decompose(last_prompt)
+    ):
+        tasks = decompose_prompt(last_prompt, ollama_client)
+        if len(tasks) > 1:
+            print(f"→ decomposed into {len(tasks)} tasks")
+            return run_decomposed(tasks, messages, request)
+
     print(f"→ routing to: {model_key} ({MODELS.get(model_key, {}).get('name', model_key)})")
 
     # --- Gemini cloud path ---
@@ -210,25 +284,9 @@ async def chat(request: ChatRequest):
     if request.stream:
         return stream_response(model_name, model_key, messages, request)
 
-    kwargs = {"model": model_name, "messages": messages, "stream": False}
-    if request.tools:
-        kwargs["tools"] = request.tools
-    if request.tool_choice is not None:
-        kwargs["tool_choice"] = request.tool_choice
-    if request.temperature is not None:
-        kwargs["temperature"] = request.temperature
-    if request.max_tokens is not None:
-        kwargs["max_tokens"] = request.max_tokens
-    if request.top_p is not None:
-        kwargs["top_p"] = request.top_p
-    if request.stop is not None:
-        kwargs["stop"] = request.stop
-    if request.response_format is not None:
-        kwargs["response_format"] = request.response_format
-    if request.seed is not None:
-        kwargs["seed"] = request.seed
-
-    response = ollama_client.chat.completions.create(**kwargs)
+    response = ollama_client.chat.completions.create(
+        **_ollama_kwargs(request, model_name, messages)
+    )
 
     choice = response.choices[0]
     message = {"role": "assistant", "content": choice.message.content}

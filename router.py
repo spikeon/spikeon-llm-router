@@ -118,6 +118,53 @@ def chat(
     text = response.choices[0].message.content
     return text, model_key
 
+_DECOMPOSE_CONNECTORS = [
+    "and then", "and also", "and make", "and change", "and move",
+    "and set", "and update", "and add", "and remove", "and fix",
+    "as well as", "additionally", "furthermore", "after that",
+    ", and ", " then ", " also ",
+]
+
+_DECOMPOSE_SYSTEM = """Break the user's request into a numbered list of atomic, sequential tasks.
+Rules:
+- One clear action per task
+- Logical order of operations (discover before modifying)
+- Use $variables for values found in earlier steps
+- Output ONLY the numbered list, nothing else"""
+
+DECOMPOSE_TOKEN_MIN = 20
+
+
+def should_decompose(prompt: str) -> bool:
+    if count_tokens(prompt) < DECOMPOSE_TOKEN_MIN:
+        return False
+    p = prompt.lower()
+    connector_hits = sum(1 for c in _DECOMPOSE_CONNECTORS if c in p)
+    sentences = [s.strip() for s in re.split(r"[.!?]", prompt) if len(s.strip()) > 5]
+    return connector_hits >= 2 or (connector_hits >= 1 and len(sentences) >= 2) or len(sentences) >= 3
+
+
+def decompose_prompt(prompt: str, ollama_client) -> list[str]:
+    try:
+        response = ollama_client.chat.completions.create(
+            model=MODELS["snappy"]["name"],
+            messages=[
+                {"role": "system", "content": _DECOMPOSE_SYSTEM},
+                {"role": "user", "content": prompt},
+            ],
+            stream=False,
+        )
+        text = response.choices[0].message.content or ""
+        tasks = []
+        for line in text.split("\n"):
+            m = re.match(r"^\d+[\.\)]\s+(.+)", line.strip())
+            if m:
+                tasks.append(m.group(1).strip())
+        return tasks if len(tasks) > 1 else [prompt]
+    except Exception:
+        return [prompt]
+
+
 def is_frustrated(prompt: str) -> bool:
     p = prompt.lower()
     
