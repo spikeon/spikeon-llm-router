@@ -1,0 +1,200 @@
+from fastapi import FastAPI
+from fastapi.responses import StreamingResponse
+from pydantic import BaseModel
+import json
+import openai
+from router import classify_prompt, is_frustrated
+from config import MODELS, OLLAMA_BASE_URL, CAVEMAN_SYSTEM_PROMPT
+
+app = FastAPI()
+
+ollama_client = openai.OpenAI(
+    base_url=OLLAMA_BASE_URL,
+    api_key="ollama"
+)
+
+class Message(BaseModel):
+    role: str
+    content: str | list | None = None
+    tool_calls: list | None = None
+    tool_call_id: str | None = None
+    name: str | None = None
+
+class ChatRequest(BaseModel):
+    model: str = "auto"
+    messages: list[Message]
+    stream: bool = False
+    tools: list | None = None
+    tool_choice: str | dict | None = None
+    temperature: float | None = None
+    max_tokens: int | None = None
+    top_p: float | None = None
+    stop: str | list | None = None
+    response_format: dict | None = None
+    seed: int | None = None
+
+def get_last_real_prompt(messages: list) -> str | None:
+    """find last user message that wasn't frustration"""
+    user_msgs = [m for m in reversed(messages) if m.role == "user"]
+    for msg in user_msgs[1:]:  # skip current message
+        if not is_frustrated(msg.content):
+            return msg.content
+    return None
+
+def stream_response(model_name: str, model_key: str, messages: list, request: "ChatRequest"):
+    def generate():
+        kwargs = {"model": model_name, "messages": messages, "stream": True}
+        if request.tools:
+            kwargs["tools"] = request.tools
+        if request.tool_choice is not None:
+            kwargs["tool_choice"] = request.tool_choice
+        if request.temperature is not None:
+            kwargs["temperature"] = request.temperature
+        if request.max_tokens is not None:
+            kwargs["max_tokens"] = request.max_tokens
+        if request.top_p is not None:
+            kwargs["top_p"] = request.top_p
+        if request.stop is not None:
+            kwargs["stop"] = request.stop
+        if request.response_format is not None:
+            kwargs["response_format"] = request.response_format
+        if request.seed is not None:
+            kwargs["seed"] = request.seed
+        response = ollama_client.chat.completions.create(**kwargs)
+        for chunk in response:
+            delta = chunk.choices[0].delta
+            data = {
+                "id": chunk.id,
+                "object": "chat.completion.chunk",
+                "model": model_key,
+                "choices": [{
+                    "index": 0,
+                    "delta": {"role": "assistant", "content": delta.content or ""},
+                    "finish_reason": chunk.choices[0].finish_reason
+                }]
+            }
+            yield f"data: {json.dumps(data)}\n\n"
+        yield "data: [DONE]\n\n"
+    return StreamingResponse(generate(), media_type="text/event-stream")
+
+@app.get("/v1/models")
+def list_models():
+    return {
+        "object": "list",
+        "data": [
+            {"id": key, "object": "model", "owned_by": "local"}
+            for key in MODELS
+        ] + [{"id": "auto", "object": "model", "owned_by": "local"}]
+    }
+
+@app.get("/api/tags")
+def ollama_tags():
+    return {
+        "models": [
+            {"name": data["name"], "model": data["name"]}
+            for data in MODELS.values()
+        ]
+    }
+
+@app.get("/api/v1/models")
+def ollama_v1_models():
+    return list_models()
+
+@app.get("/v1/props")
+def props():
+    return {}
+
+@app.get("/props")
+def props_root():
+    return {}
+
+@app.get("/version")
+def version():
+    return {"version": "0.1.0"}
+
+@app.get("/v1/models/{model_id}")
+def get_model(model_id: str):
+    return {"id": model_id, "object": "model", "owned_by": "local"}
+
+@app.post("/v1/chat/completions")
+async def chat(request: ChatRequest):
+    user_messages = [m for m in request.messages if m.role == "user"]
+    last_prompt = user_messages[-1].content if user_messages else ""
+
+    # frustration detection
+    frustrated = is_frustrated(last_prompt)
+    if frustrated:
+        model_key = "smart"
+        last_real = get_last_real_prompt(request.messages)
+        if last_real:
+            print(f"→ FRUSTRATED — re-running: '{last_real[:50]}...' with smart")
+            last_prompt = last_real
+        else:
+            print(f"→ FRUSTRATED — no prior question, using smart on current")
+    else:
+        model_key = classify_prompt(last_prompt) if request.model == "auto" else request.model
+
+    model_name = MODELS.get(model_key, MODELS["smart"])["name"]
+
+    # build messages
+    has_system = any(m.role == "system" for m in request.messages)
+    messages = []
+    for m in request.messages:
+        if m.role == "system":
+            messages.append({
+                "role": "system",
+                "content": m.content + "\n\nADDITIONAL INSTRUCTIONS: " + CAVEMAN_SYSTEM_PROMPT
+            })
+        else:
+            messages.append({"role": m.role, "content": m.content})
+
+    if not has_system:
+        messages.insert(0, {"role": "system", "content": CAVEMAN_SYSTEM_PROMPT})
+
+    # when re-running last real prompt, replace the final user message in the list
+    if frustrated and last_prompt != user_messages[-1].content:
+        for i in range(len(messages) - 1, -1, -1):
+            if messages[i]["role"] == "user":
+                messages[i]["content"] = last_prompt
+                break
+
+    print(f"→ routing to: {model_key} ({model_name})")
+
+    if request.stream:
+        return stream_response(model_name, model_key, messages, request)
+
+    kwargs = {"model": model_name, "messages": messages, "stream": False}
+    if request.tools:
+        kwargs["tools"] = request.tools
+    if request.tool_choice is not None:
+        kwargs["tool_choice"] = request.tool_choice
+    if request.temperature is not None:
+        kwargs["temperature"] = request.temperature
+    if request.max_tokens is not None:
+        kwargs["max_tokens"] = request.max_tokens
+    if request.top_p is not None:
+        kwargs["top_p"] = request.top_p
+    if request.stop is not None:
+        kwargs["stop"] = request.stop
+    if request.response_format is not None:
+        kwargs["response_format"] = request.response_format
+    if request.seed is not None:
+        kwargs["seed"] = request.seed
+
+    response = ollama_client.chat.completions.create(**kwargs)
+
+    choice = response.choices[0]
+    message = {"role": "assistant", "content": choice.message.content}
+    if hasattr(choice.message, "tool_calls") and choice.message.tool_calls:
+        message["tool_calls"] = [tc.model_dump() for tc in choice.message.tool_calls]
+
+    return {
+        "id": response.id,
+        "object": "chat.completion",
+        "model": model_key,
+        "choices": [{
+            "index": 0,
+            "message": message,
+            "finish_reason": choice.finish_reason
+        }]
+    }
