@@ -33,6 +33,11 @@ def classify_prompt(prompt: str) -> str:
     if any(w in p for w in FINANCE_KEYWORDS) or any(w in p for w in GOOGLE_KEYWORDS):
         return "gemini"
 
+    # reasoning keywords checked before personal-info regex so "should I use X"
+    # is treated as a decision question, not a preference statement
+    if any(re.search(r'\b' + re.escape(w) + r'\b', p) for w in REASONING_KEYWORDS):
+        return "thinker"
+
     # pattern: setting or retrieving personal info → needs tool-capable model
     if re.search(
         r"\b(my|your) .+ is\b"           # "my quest is..."
@@ -62,10 +67,6 @@ def classify_prompt(prompt: str) -> str:
     # long → smart
     if tokens > TOKEN_THRESHOLD_LONG:
         return "smart"
-
-    # reasoning → thinker
-    if any(w in p for w in REASONING_KEYWORDS):
-        return "thinker"
 
     # write/explain → balanced
     if any(w in p for w in BALANCED_KEYWORDS):
