@@ -139,7 +139,7 @@ def should_decompose(prompt: str) -> bool:
     if count_tokens(prompt) < DECOMPOSE_TOKEN_MIN:
         return False
     p = prompt.lower()
-    connector_hits = sum(1 for c in _DECOMPOSE_CONNECTORS if c in p)
+    connector_hits = sum(p.count(c) for c in _DECOMPOSE_CONNECTORS)
     sentences = [s.strip() for s in re.split(r"[.!?]", prompt) if len(s.strip()) > 5]
     return connector_hits >= 2 or (connector_hits >= 1 and len(sentences) >= 2) or len(sentences) >= 3
 

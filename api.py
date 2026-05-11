@@ -2,6 +2,7 @@ from fastapi import FastAPI
 from fastapi.responses import StreamingResponse
 from pydantic import BaseModel
 import json
+import time
 import openai
 from router import classify_prompt, is_frustrated, should_decompose, decompose_prompt
 from config import MODELS, OLLAMA_BASE_URL, CAVEMAN_SYSTEM_PROMPT
@@ -92,6 +93,7 @@ def run_decomposed(tasks: list[str], base_messages: list, request: "ChatRequest"
     """
     prefix = base_messages[:-1]  # everything except the original user message
     accumulated: list[tuple[str, str]] = []  # (task, response) pairs
+    wall_start = time.time()
 
     for i, task in enumerate(tasks):
         # Build message list: prefix + interleaved prior task/response pairs + this task
@@ -102,12 +104,17 @@ def run_decomposed(tasks: list[str], base_messages: list, request: "ChatRequest"
         task_messages.append({"role": "user", "content": task})
 
         model_key = classify_prompt(task)
-        print(f"→ [decomposed {i + 1}/{len(tasks)}] '{task[:50]}' → {model_key}")
+        model_display = MODELS.get(model_key, {}).get("name", model_key)
+        print(f"\n[task {i + 1}/{len(tasks)}] → {model_key} ({model_display})")
+        print(f"  prompt: {task[:80]}")
+        t0 = time.time()
 
         if model_key == "gemini":
             system = next((m["content"] for m in task_messages if m["role"] == "system"), CAVEMAN_SYSTEM_PROMPT)
             history = [m for m in task_messages if m["role"] in ("user", "assistant")][:-1]
             text = gemini_chat(task, system, history)
+            elapsed = time.time() - t0
+            print(f"  ✓ done in {elapsed:.1f}s")
             accumulated.append((task, text))
             continue
 
@@ -116,8 +123,10 @@ def run_decomposed(tasks: list[str], base_messages: list, request: "ChatRequest"
             **_ollama_kwargs(request, model_name, task_messages)
         )
         choice = response.choices[0]
+        elapsed = time.time() - t0
 
         if hasattr(choice.message, "tool_calls") and choice.message.tool_calls:
+            print(f"  ↩ tool_call returned — surfacing to client")
             message = {"role": "assistant", "content": choice.message.content}
             message["tool_calls"] = [tc.model_dump() for tc in choice.message.tool_calls]
             return {
@@ -127,8 +136,12 @@ def run_decomposed(tasks: list[str], base_messages: list, request: "ChatRequest"
                 "choices": [{"index": 0, "message": message, "finish_reason": choice.finish_reason}],
             }
 
+        print(f"  ✓ done in {elapsed:.1f}s")
         accumulated.append((task, choice.message.content or ""))
 
+    print(f"\n{'='*60}")
+    print(f"DECOMPOSE complete — {len(accumulated)} tasks in {time.time() - wall_start:.1f}s total")
+    print(f"{'='*60}\n")
     final = accumulated[-1][1] if accumulated else ""
     return {
         "id": "decomposed-response",
@@ -233,7 +246,11 @@ async def chat(request: ChatRequest):
     ):
         tasks = decompose_prompt(last_prompt, ollama_client)
         if len(tasks) > 1:
-            print(f"→ decomposed into {len(tasks)} tasks")
+            print(f"\n{'='*60}")
+            print(f"DECOMPOSE → {len(tasks)} tasks")
+            for j, t in enumerate(tasks, 1):
+                print(f"  {j}. {t[:90]}")
+            print(f"{'='*60}")
             return run_decomposed(tasks, messages, request)
 
     print(f"→ routing to: {model_key} ({MODELS.get(model_key, {}).get('name', model_key)})")
