@@ -235,6 +235,27 @@ async def chat(request: ChatRequest):
     user_messages = [m for m in request.messages if m.role == "user"]
     last_prompt = user_messages[-1].content if user_messages else ""
 
+    # orchestrator mode: skip all consumer-facing features, pass through clean
+    if request.model == "orchestrator":
+        model_name = MODELS["orchestrator"]["name"]
+        messages = [{"role": m.role, "content": m.content} for m in request.messages]
+        print(f"→ orchestrator ({model_name})")
+        if request.stream:
+            return stream_response(model_name, "orchestrator", messages, request)
+        response = ollama_client.chat.completions.create(
+            **_ollama_kwargs(request, model_name, messages)
+        )
+        choice = response.choices[0]
+        message = {"role": "assistant", "content": choice.message.content}
+        if hasattr(choice.message, "tool_calls") and choice.message.tool_calls:
+            message["tool_calls"] = [tc.model_dump() for tc in choice.message.tool_calls]
+        return {
+            "id": response.id,
+            "object": "chat.completion",
+            "model": "orchestrator",
+            "choices": [{"index": 0, "message": message, "finish_reason": choice.finish_reason}],
+        }
+
     # frustration detection
     frustrated = is_frustrated(last_prompt)
     if frustrated:

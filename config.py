@@ -35,6 +35,18 @@ MODELS = {
         "tokens_per_sec": 9,
         "description": "Hard/long/complex"
     },
+    "orchestrator": {
+        "name": "gemma4:31b",
+        "tokens_per_sec": 9,
+        "description": "Hermes/agent orchestration: full model, no prompt injection, no decomposition",
+    },
+
+    # Google Gemini cloud model — handles Drive, Sheets, Gmail, and finance
+    "gemini": {
+        "name": "gemini-2.0-flash",
+        "tokens_per_sec": 150,
+        "description": "Google cloud: Drive/Sheets/Gmail + finance (Bills sheet)",
+    }
 }
 
 # Ollama endpoint
@@ -83,13 +95,6 @@ MEMORY_KEYWORDS = [
 SWEAR_KEYWORDS = [
     "fuck", "shit", "damn", "hell", "ass", "crap", "wtf", "bullshit"
 ]
-
-# Google Gemini cloud model — handles Drive, Sheets, Gmail, and finance
-MODELS["gemini"] = {
-    "name": "gemini-2.0-flash",
-    "tokens_per_sec": 150,
-    "description": "Google cloud: Drive/Sheets/Gmail + finance (Bills sheet)",
-}
 
 BILLS_SHEET_NAME = "Bills"
 
