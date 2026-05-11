@@ -5,6 +5,7 @@ import json
 import openai
 from router import classify_prompt, is_frustrated
 from config import MODELS, OLLAMA_BASE_URL, CAVEMAN_SYSTEM_PROMPT
+from gemini_client import gemini_chat, gemini_stream
 
 app = FastAPI()
 
@@ -84,7 +85,10 @@ def list_models():
         "data": [
             {"id": key, "object": "model", "owned_by": "local"}
             for key in MODELS
-        ] + [{"id": "auto", "object": "model", "owned_by": "local"}]
+        ] + [
+            {"id": "auto", "object": "model", "owned_by": "local"},
+            {"id": "gemini", "object": "model", "owned_by": "google"},
+        ]
     }
 
 @app.get("/api/tags")
@@ -158,7 +162,50 @@ async def chat(request: ChatRequest):
                 messages[i]["content"] = last_prompt
                 break
 
-    print(f"→ routing to: {model_key} ({model_name})")
+    print(f"→ routing to: {model_key} ({MODELS.get(model_key, {}).get('name', model_key)})")
+
+    # --- Gemini cloud path ---
+    if model_key == "gemini":
+        system = next(
+            (m["content"] for m in messages if m["role"] == "system"),
+            CAVEMAN_SYSTEM_PROMPT,
+        )
+        history = [m for m in messages if m["role"] in ("user", "assistant")]
+        # drop the last user message — it's the prompt
+        if history and history[-1]["role"] == "user":
+            history = history[:-1]
+
+        if request.stream:
+            def _gen_gemini():
+                for text_chunk in gemini_stream(last_prompt, system, history):
+                    data = {
+                        "id": "gemini-stream",
+                        "object": "chat.completion.chunk",
+                        "model": "gemini",
+                        "choices": [{
+                            "index": 0,
+                            "delta": {"role": "assistant", "content": text_chunk},
+                            "finish_reason": None,
+                        }],
+                    }
+                    yield f"data: {json.dumps(data)}\n\n"
+                yield "data: [DONE]\n\n"
+            return StreamingResponse(_gen_gemini(), media_type="text/event-stream")
+
+        text = gemini_chat(last_prompt, system, history)
+        return {
+            "id": "gemini-response",
+            "object": "chat.completion",
+            "model": "gemini",
+            "choices": [{
+                "index": 0,
+                "message": {"role": "assistant", "content": text},
+                "finish_reason": "stop",
+            }],
+        }
+
+    # --- Ollama local path ---
+    model_name = MODELS.get(model_key, MODELS["smart"])["name"]
 
     if request.stream:
         return stream_response(model_name, model_key, messages, request)
@@ -195,6 +242,6 @@ async def chat(request: ChatRequest):
         "choices": [{
             "index": 0,
             "message": message,
-            "finish_reason": choice.finish_reason
-        }]
+            "finish_reason": choice.finish_reason,
+        }],
     }

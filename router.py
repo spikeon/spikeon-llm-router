@@ -8,8 +8,10 @@ from config import (
     CODE_KEYWORDS,
     REASONING_KEYWORDS,
     BALANCED_KEYWORDS,
-    MEMORY_KEYWORDS, 
-    SWEAR_KEYWORDS
+    MEMORY_KEYWORDS,
+    SWEAR_KEYWORDS,
+    FINANCE_KEYWORDS,
+    GOOGLE_KEYWORDS,
 )
 import re
 
@@ -26,6 +28,10 @@ def count_tokens(text: str) -> float:
 def classify_prompt(prompt: str) -> str:
     p = prompt.lower()
     tokens = count_tokens(prompt)
+
+    # finance or Google Workspace → Gemini cloud
+    if any(w in p for w in FINANCE_KEYWORDS) or any(w in p for w in GOOGLE_KEYWORDS):
+        return "gemini"
 
     # pattern: setting or retrieving personal info → needs tool-capable model
     if re.search(
@@ -85,23 +91,25 @@ def chat(
 
     # pick model
     model_key = override_model if override_model else classify_prompt(prompt)
-    model_name = MODELS[model_key]["name"]
 
     if verbose:
-        print(f"→ routing to: {model_key} ({model_name})")
+        print(f"→ routing to: {model_key} ({MODELS[model_key]['name']})")
         print(f"→ speed: {MODELS[model_key]['tokens_per_sec']} t/s")
+
+    # Gemini cloud path
+    if model_key == "gemini":
+        from gemini_client import gemini_chat
+        text = gemini_chat(prompt, system_prompt, conversation_history or [])
+        return text, "gemini"
+
+    model_name = MODELS[model_key]["name"]
 
     # build messages
     messages = [{"role": "system", "content": system_prompt}]
-
-    # add history if provided
     if conversation_history:
         messages.extend(conversation_history)
-
-    # add current prompt
     messages.append({"role": "user", "content": prompt})
 
-    # call ollama
     response = client.chat.completions.create(
         model=model_name,
         messages=messages,

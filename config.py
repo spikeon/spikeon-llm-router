@@ -83,3 +83,28 @@ MEMORY_KEYWORDS = [
 SWEAR_KEYWORDS = [
     "fuck", "shit", "damn", "hell", "ass", "crap", "wtf", "bullshit"
 ]
+
+# Google Gemini cloud model — handles Drive, Sheets, Gmail, and finance
+MODELS["gemini"] = {
+    "name": "gemini-2.0-flash",
+    "tokens_per_sec": 150,
+    "description": "Google cloud: Drive/Sheets/Gmail + finance (Bills sheet)",
+}
+
+BILLS_SHEET_NAME = "Bills"
+
+FINANCE_KEYWORDS = [
+    "bill", "bills", "money", "payment", "budget", "expense", "expenses",
+    "income", "spend", "spent", "cost", "costs", "rent", "salary",
+    "debt", "loan", "bank", "account", "savings", "invest", "investing",
+    "stock", "finance", "financial", "dollar", "pay", "paid", "owe",
+    "credit card", "debit", "insurance", "subscription", "overdue",
+    "due date", "balance", "wallet", "refund", "charge", "afford",
+    "transaction", "monthly", "annual fee",
+]
+
+GOOGLE_KEYWORDS = [
+    "google drive", "my drive", "google sheet", "google sheets",
+    "spreadsheet", "gmail", "my email", "check my email", "inbox",
+    "sent mail", "google doc", "google docs", "my files", "drive file",
+]
