@@ -1,3 +1,4 @@
+import json
 import os
 from google import genai
 from google.genai import types
@@ -12,24 +13,51 @@ SCOPES = [
     "https://www.googleapis.com/auth/drive.readonly",
     "https://www.googleapis.com/auth/gmail.readonly",
 ]
+
+# Hermes stores Google OAuth tokens here when the workspace skill is set up
+_HERMES_TOKEN_PATH = os.path.expanduser("~/.hermes/google_token.json")
+_HERMES_CREDS_PATH = os.path.expanduser("~/.hermes/google_client_secret.json")
+# Fallback locations (standalone router setup)
 _TOKEN_PATH = os.path.expanduser("~/.config/spikeon-router/google_token.json")
 _CREDS_PATH = os.path.expanduser("~/.config/spikeon-router/google_credentials.json")
+# Hermes auth pool
+_HERMES_AUTH_PATH = os.path.expanduser("~/.hermes/auth.json")
+
+
+def _get_gemini_api_key() -> str:
+    """Return Gemini API key: env var → Hermes credential pool."""
+    key = os.environ.get("GEMINI_API_KEY", "")
+    if key:
+        return key
+    try:
+        with open(_HERMES_AUTH_PATH) as f:
+            auth = json.load(f)
+        pool = auth.get("credential_pool", {}).get("gemini", [])
+        if isinstance(pool, list) and pool:
+            return pool[0].get("access_token", "")
+    except Exception:
+        pass
+    return ""
 
 _EMAIL_TERMS = {"email", "gmail", "inbox", "mail", "sent mail"}
 
 
 def _google_creds():
+    # prefer Hermes-managed token, fall back to standalone path
+    token = _HERMES_TOKEN_PATH if os.path.exists(_HERMES_TOKEN_PATH) else _TOKEN_PATH
+    secret = _HERMES_CREDS_PATH if os.path.exists(_HERMES_CREDS_PATH) else _CREDS_PATH
+
     creds = None
-    if os.path.exists(_TOKEN_PATH):
-        creds = Credentials.from_authorized_user_file(_TOKEN_PATH, SCOPES)
+    if os.path.exists(token):
+        creds = Credentials.from_authorized_user_file(token, SCOPES)
     if not creds or not creds.valid:
         if creds and creds.expired and creds.refresh_token:
             creds.refresh(Request())
-        elif os.path.exists(_CREDS_PATH):
-            flow = InstalledAppFlow.from_client_secrets_file(_CREDS_PATH, SCOPES)
+        elif os.path.exists(secret):
+            flow = InstalledAppFlow.from_client_secrets_file(secret, SCOPES)
             creds = flow.run_local_server(port=0)
-            os.makedirs(os.path.dirname(_TOKEN_PATH), exist_ok=True)
-            with open(_TOKEN_PATH, "w") as f:
+            os.makedirs(os.path.dirname(token), exist_ok=True)
+            with open(token, "w") as f:
                 f.write(creds.to_json())
         else:
             return None
@@ -116,9 +144,9 @@ def _to_contents(history: list, prompt: str) -> list:
 
 
 def gemini_chat(prompt: str, system: str, history: list) -> str:
-    api_key = os.environ.get("GEMINI_API_KEY", "")
+    api_key = _get_gemini_api_key()
     if not api_key:
-        raise RuntimeError("GEMINI_API_KEY environment variable not set")
+        raise RuntimeError("No Gemini API key found — run 'hermes auth gemini' or set GEMINI_API_KEY")
 
     ctx = _build_context(prompt)
     full_system = system + ("\n\n" + ctx if ctx else "")
@@ -137,9 +165,9 @@ def gemini_chat(prompt: str, system: str, history: list) -> str:
 
 
 def gemini_stream(prompt: str, system: str, history: list):
-    api_key = os.environ.get("GEMINI_API_KEY", "")
+    api_key = _get_gemini_api_key()
     if not api_key:
-        raise RuntimeError("GEMINI_API_KEY environment variable not set")
+        raise RuntimeError("No Gemini API key found — run 'hermes auth gemini' or set GEMINI_API_KEY")
 
     ctx = _build_context(prompt)
     full_system = system + ("\n\n" + ctx if ctx else "")
