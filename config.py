@@ -38,7 +38,12 @@ MODELS = {
     "orchestrator": {
         "name": "qwen3.6:latest",
         "tokens_per_sec": 21,
-        "description": "Hermes/agent orchestration: strong tool-calling, no prompt injection, no decomposition",
+        "description": "Hermes main agent: strong reasoning + tool selection, think-tokens filtered",
+    },
+    "worker": {
+        "name": "qwen3.6:latest",
+        "tokens_per_sec": 21,
+        "description": "Heavy tool-calling subagent: reasoning + MCP tool use, think-tokens filtered",
     },
 
     # Google Gemini cloud model — handles Drive, Sheets, Gmail, and finance

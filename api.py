@@ -2,6 +2,7 @@ from fastapi import FastAPI
 from fastapi.responses import StreamingResponse
 from pydantic import BaseModel
 import json
+import re
 import time
 import openai
 from router import classify_prompt, is_frustrated, should_decompose, decompose_prompt
@@ -43,6 +44,34 @@ def get_last_real_prompt(messages: list) -> str | None:
             return msg.content
     return None
 
+def _filter_think(content: str, buf: str, in_think: bool) -> tuple[str, str, bool]:
+    """Strip <think>...</think> blocks from a streaming content chunk.
+    buf holds partial tag chars carried between calls; in_think tracks state."""
+    buf += content
+    output = ""
+    while buf:
+        if not in_think:
+            idx = buf.find("<think>")
+            if idx == -1:
+                safe = max(0, len(buf) - 6)
+                output += buf[:safe]
+                buf = buf[safe:]
+                break
+            output += buf[:idx]
+            buf = buf[idx + 7:]
+            in_think = True
+        else:
+            idx = buf.find("</think>")
+            if idx == -1:
+                buf = buf[max(0, len(buf) - 8):]
+                break
+            buf = buf[idx + 8:]
+            in_think = False
+            if buf.startswith("\n"):
+                buf = buf[1:]
+    return output, buf, in_think
+
+
 def stream_response(model_name: str, model_key: str, messages: list, request: "ChatRequest"):
     def generate():
         response = ollama_client.chat.completions.create(
@@ -64,7 +93,7 @@ def stream_response(model_name: str, model_key: str, messages: list, request: "C
         yield "data: [DONE]\n\n"
     return StreamingResponse(generate(), media_type="text/event-stream")
 
-def _ollama_kwargs(request: "ChatRequest", model_name: str, messages: list, stream: bool = False) -> dict:
+def _ollama_kwargs(request: "ChatRequest", model_name: str, messages: list, stream: bool = False, num_ctx: int = None) -> dict:
     kwargs = {"model": model_name, "messages": messages, "stream": stream}
     if request.tools:
         kwargs["tools"] = request.tools
@@ -82,6 +111,8 @@ def _ollama_kwargs(request: "ChatRequest", model_name: str, messages: list, stre
         kwargs["response_format"] = request.response_format
     if request.seed is not None:
         kwargs["seed"] = request.seed
+    if num_ctx is not None:
+        kwargs["extra_body"] = {"options": {"num_ctx": num_ctx}}
     return kwargs
 
 
@@ -198,6 +229,7 @@ def list_models():
         ] + [
             {"id": "auto", "object": "model", "owned_by": "local"},
             {"id": "gemini", "object": "model", "owned_by": "google"},
+            {"id": "worker", "object": "model", "owned_by": "local"},
         ]
     }
 
@@ -235,24 +267,122 @@ async def chat(request: ChatRequest):
     user_messages = [m for m in request.messages if m.role == "user"]
     last_prompt = user_messages[-1].content if user_messages else ""
 
-    # orchestrator mode: skip all consumer-facing features, pass through clean
-    if request.model == "orchestrator":
-        model_name = MODELS["orchestrator"]["name"]
-        messages = [{"role": m.role, "content": m.content} for m in request.messages]
-        print(f"→ orchestrator ({model_name})")
+    # orchestrator / worker: bypass consumer features, full tool-call support
+    # worker also strips <think>...</think> tokens (qwen3.6 thinking mode)
+    if request.model in ("orchestrator", "worker"):
+        key = request.model
+        model_name = MODELS[key]["name"]
+        filter_think = "qwen3" in model_name.lower()
+
+        messages = []
+        for m in request.messages:
+            msg = {"role": m.role, "content": m.content}
+            if m.tool_call_id is not None:
+                msg["tool_call_id"] = m.tool_call_id
+            if m.name is not None:
+                msg["name"] = m.name
+            if m.tool_calls is not None:
+                msg["tool_calls"] = m.tool_calls
+            messages.append(msg)
+
+        tool_names = [t.get("function", {}).get("name", "?") for t in (request.tools or [])]
+        last_role = messages[-1]["role"] if messages else "?"
+        last_content = str(messages[-1].get("content", ""))[:120] if messages else ""
+        print(f"→ {key} ({model_name}) stream={request.stream} tools={len(tool_names)} last_role={last_role}")
+        print(f"  last_msg: {last_content!r}")
+
+        # Inject a tool directory into system prompt so the model can find key tools
+        # without scanning the full list (133+ tools causes hallucination of absence)
+        if tool_names and last_role == "user":
+            mcp_by_prefix: dict[str, list[str]] = {}
+            for t in tool_names:
+                if t.startswith("mcp_"):
+                    parts = t.split("_", 2)
+                    prefix = parts[1] if len(parts) >= 2 else "other"
+                    mcp_by_prefix.setdefault(prefix, []).append(t)
+            directory_lines = ["AVAILABLE MCP TOOLS (use exact names):"]
+            for prefix, tools in sorted(mcp_by_prefix.items()):
+                directory_lines.append(f"  {prefix}: {', '.join(tools[:6])}{'...' if len(tools) > 6 else ''}")
+            tool_directory = "\n".join(directory_lines)
+
+            has_system = any(m.get("role") == "system" for m in messages)
+            if has_system:
+                for m in messages:
+                    if m.get("role") == "system":
+                        m["content"] = m["content"] + "\n\n" + tool_directory
+                        break
+            else:
+                messages.insert(0, {"role": "system", "content": tool_directory})
+
         if request.stream:
-            return stream_response(model_name, "orchestrator", messages, request)
-        response = ollama_client.chat.completions.create(
-            **_ollama_kwargs(request, model_name, messages)
-        )
+            def _stream_agent():
+                kwargs = _ollama_kwargs(request, model_name, messages, stream=True, num_ctx=131072)
+                chunks_sent = 0
+                finish = None
+                think_buf = ""
+                in_think = False
+                try:
+                    for chunk in ollama_client.chat.completions.create(**kwargs):
+                        choice = chunk.choices[0]
+                        delta = choice.delta
+                        finish = choice.finish_reason
+                        delta_data = {}
+                        if delta.content is not None:
+                            if filter_think:
+                                filtered, think_buf, in_think = _filter_think(delta.content, think_buf, in_think)
+                                if filtered:
+                                    delta_data["content"] = filtered
+                            else:
+                                delta_data["content"] = delta.content
+                        tc = getattr(delta, "tool_calls", None)
+                        if tc:
+                            delta_data["tool_calls"] = [t.model_dump() for t in tc]
+                            for t in tc:
+                                if t.function and t.function.name:
+                                    print(f"    tool_call: {t.function.name}({str(getattr(t.function, 'arguments', ''))[:80]})")
+                        if delta_data or finish:
+                            data = {
+                                "id": chunk.id,
+                                "object": "chat.completion.chunk",
+                                "model": key,
+                                "choices": [{"index": 0, "delta": delta_data, "finish_reason": finish}],
+                            }
+                            yield f"data: {json.dumps(data)}\n\n"
+                        chunks_sent += 1
+                    # flush any remaining non-think buffer
+                    if filter_think and think_buf and not in_think:
+                        data = {
+                            "id": "flush",
+                            "object": "chat.completion.chunk",
+                            "model": key,
+                            "choices": [{"index": 0, "delta": {"content": think_buf}, "finish_reason": None}],
+                        }
+                        yield f"data: {json.dumps(data)}\n\n"
+                except Exception as e:
+                    print(f"  [stream error] {e}")
+                print(f"  stream done: chunks={chunks_sent} finish={finish}")
+                yield "data: [DONE]\n\n"
+            return StreamingResponse(_stream_agent(), media_type="text/event-stream")
+
+        # non-streaming path
+        kwargs = _ollama_kwargs(request, model_name, messages, stream=False, num_ctx=131072)
+        response = ollama_client.chat.completions.create(**kwargs)
         choice = response.choices[0]
-        message = {"role": "assistant", "content": choice.message.content}
-        if hasattr(choice.message, "tool_calls") and choice.message.tool_calls:
-            message["tool_calls"] = [tc.model_dump() for tc in choice.message.tool_calls]
+        tool_calls = getattr(choice.message, "tool_calls", None)
+        content = choice.message.content or ""
+        if filter_think and content:
+            content = re.sub(r"<think>.*?</think>\s*", "", content, flags=re.DOTALL).strip()
+        print(f"  finish={choice.finish_reason} content_len={len(content)} tool_calls={bool(tool_calls)}")
+        if tool_calls:
+            for tc in tool_calls:
+                print(f"    tool_call: {tc.function.name}({str(tc.function.arguments)[:80]})")
+        message = {"role": "assistant", "content": content}
+        if tool_calls:
+            message["tool_calls"] = [tc.model_dump() for tc in tool_calls]
         return {
             "id": response.id,
             "object": "chat.completion",
-            "model": "orchestrator",
+            "model": key,
             "choices": [{"index": 0, "message": message, "finish_reason": choice.finish_reason}],
         }
 

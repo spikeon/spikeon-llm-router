@@ -40,9 +40,9 @@ def classify_prompt(prompt: str) -> str:
 
     # pattern: setting or retrieving personal info → needs tool-capable model
     if re.search(
-        r"\b(my|your) .+ is\b"           # "my quest is..."
-        r"|\bi (am|prefer|like|hate|love|use|have)\b"  # "I am / I prefer..."
-        r"|\bwhat(\'?s| is| are) (my|your)\b"          # "what is my X?"
+        r"\b(my|your) .+ is\b"                          # "my quest is..."
+        r"|\bi (am|prefer|like|hate|love|use|have)\b"   # "I am / I prefer..."
+        r"|\bwhat(\'?s| is| are) (my|your)\b"           # "what is my X?"
         r"|\bdo you (know|remember)\b"                  # "do you remember...?"
         r"|\bwhat did i\b"                              # "what did I say/tell you"
         r"|\btell me (about )?(my|your)\b",             # "tell me my X"
