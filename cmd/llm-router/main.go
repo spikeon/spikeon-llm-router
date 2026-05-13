@@ -4,11 +4,16 @@ import (
 	"fmt"
 	"net/http"
 	"os"
+	"path/filepath"
 
 	"github.com/spikeon/llm-router/internal/handlers"
 )
 
 func main() {
+	if wd, err := os.Getwd(); err == nil {
+		loadDotEnv(filepath.Join(wd, ".env"))
+	}
+
 	port := os.Getenv("PORT")
 	if port == "" {
 		port = "11435"

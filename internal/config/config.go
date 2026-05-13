@@ -1,23 +1,20 @@
 package config
 
+import (
+	"os"
+	"strings"
+)
+
 type ModelDef struct {
 	Name         string
+	Provider     string // key into Providers; empty => DefaultProvider ("local")
+	APIKeyEnv    string // optional: env var whose value is sent as Bearer token (OpenAI-compat providers)
 	TokensPerSec int
 	Description  string
 }
 
-var Models = map[string]ModelDef{
-	"snappy":       {"qwen2.5:0.5b", 397, "Trivial/factual/short"},
-	"fast":         {"gemma4:e2b", 145, "General chat"},
-	"memory-fast":  {"gemma4:e2b", 145, "Memory/preference saving (tool-capable)"},
-	"coder":        {"mistral:7b", 111, "Code/debug/math"},
-	"balanced":     {"gemma4:e4b", 105, "Write/summarize/explain"},
-	"thinker":      {"qwen3.6:latest", 21, "Deep reasoning/analysis"},
-	"smart":        {"gemma4:31b", 9, "Hard/long/complex"},
-	"orchestrator": {"qwen3.6:latest", 21, "Hermes main agent: strong reasoning + tool selection, think-tokens filtered"},
-	"worker":       {"qwen3.6:latest", 21, "Heavy tool-calling subagent: reasoning + MCP tool use, think-tokens filtered"},
-	"gemini":       {"gemini-2.0-flash", 150, "Google cloud: Drive/Sheets/Gmail + finance (Bills sheet)"},
-}
+// DefaultProvider is the Providers map key used when ModelDef.Provider is empty.
+const DefaultProvider = "local"
 
 const (
 	OllamaBaseURL        = "http://localhost:11434/v1"
@@ -26,58 +23,93 @@ const (
 	BillsSheetName       = "Bills"
 )
 
-const CavemanSystemPrompt = `Ultra-compressed response rules:
-- Drop all articles (a, an, the)
-- Drop filler words (very, really, just, simply)
-- No pleasantries or preamble
-- Short punchy fragments
-- Max signal, zero fluff
-- Use symbols where possible (→, +, =, &)
-- Lists over paragraphs always
-- Never restate question
-- Jump straight to answer`
+// DefaultParserName selects the built-in OpenAI-compatible completion normalizer when ProviderDef.Parser is empty.
+const DefaultParserName = "openai_compat"
 
-var CodeKeywords = []string{
-	"code", "debug", "function", "class", "error",
-	"fix", "script", "python", "javascript", "bash",
-	"sql", "programming", "implement", "refactor",
+// ProviderDef configures an upstream OpenAI-compatible endpoint. Parser names a registered CompletionParser
+// (see internal/providers/ollama); empty Parser defaults to DefaultParserName.
+type ProviderDef struct {
+	BaseURL string
+	Parser  string
 }
 
-var ReasoningKeywords = []string{
-	"analyze", "reason", "compare", "pros", "cons",
-	"plan", "strategy", "think through", "evaluate",
-	"should i", "which is better", "tradeoffs",
+// Providers maps logical provider keys to endpoint + parser metadata.
+//
+// Override only the "local" entry BaseURL at runtime with OLLAMA_BASE_URL (existing Docker / dev behavior).
+//
+// "google_openai" targets Gemini via the Google AI OpenAI compatibility layer; set APIKeyEnv to GEMINI_API_KEY on models that use it.
+var Providers = map[string]ProviderDef{
+	"local": {BaseURL: OllamaBaseURL},
+	// https://ai.google.dev/gemini-api/docs/openai
+	"google_openai": {BaseURL: "https://generativelanguage.googleapis.com/v1beta/openai", Parser: "google_openai"},
 }
 
-var BalancedKeywords = []string{
-	"summarize", "rewrite", "translate", "write",
-	"explain", "essay", "draft", "describe",
-	"reference", "media", "movie", "book", "quote", "joke",
+var Models = map[string]ModelDef{
+	"snappy":       {Name: "qwen2.5:0.5b", TokensPerSec: 397, Description: "Trivial/factual/short"},
+	"fast":         {Name: "gemma4:e2b", TokensPerSec: 145, Description: "General chat"},
+	"memory-fast":  {Name: "gemma4:e2b", TokensPerSec: 145, Description: "Memory/preference saving (tool-capable)"},
+	"coder":        {Name: "mistral:7b", TokensPerSec: 111, Description: "Code/debug/math"},
+	"balanced":     {Name: "gemma4:e4b", TokensPerSec: 105, Description: "Write/summarize/explain"},
+	"thinker":      {Name: "qwen3.6:latest", TokensPerSec: 21, Description: "Deep reasoning/analysis"},
+	"smart":        {Name: "gemma4:31b", TokensPerSec: 9, Description: "Hard/long/complex"},
+	"orchestrator": {Name: "gemini-3-flash-preview", Provider: "google_openai", APIKeyEnv: "GEMINI_API_KEY", TokensPerSec: 150, Description: "Hermes main agent: strong reasoning + tool selection (Gemini OpenAI-compat); think-tokens filtered if model emits them"},
+	"worker":       {Name: "qwen3.6:latest", TokensPerSec: 21, Description: "Heavy tool-calling subagent: reasoning + MCP tool use, think-tokens filtered"},
+	"gemini":       {Name: "gemini-3-flash-preview", TokensPerSec: 150, Description: "Google cloud: Drive/Sheets/Gmail + finance (Bills sheet)"},
 }
 
-var MemoryKeywords = []string{
-	"remember", "your name", "my name", "call you",
-	"forget", "recall", "who are you", "who am i",
+// ProviderKey returns the config key for looking up a base URL.
+func (m ModelDef) ProviderKey() string {
+	if m.Provider != "" {
+		return m.Provider
+	}
+	return DefaultProvider
 }
 
-var SwearKeywords = []string{
-	"fuck", "shit", "damn", "hell", "ass", "crap", "wtf", "bullshit",
+// LookupProvider returns merged provider config for a key, falling back to DefaultProvider then a minimal local default.
+func LookupProvider(providerKey string) ProviderDef {
+	if providerKey == "" {
+		providerKey = DefaultProvider
+	}
+	if def, ok := Providers[providerKey]; ok && strings.TrimSpace(def.BaseURL) != "" {
+		return def
+	}
+	if providerKey != DefaultProvider {
+		return LookupProvider(DefaultProvider)
+	}
+	return ProviderDef{BaseURL: OllamaBaseURL}
 }
 
-var FinanceKeywords = []string{
-	"bill", "bills", "money", "payment", "budget", "expense", "expenses",
-	"income", "spend", "spent", "cost", "costs", "rent", "salary",
-	"debt", "loan", "bank", "account", "savings", "invest", "investing",
-	"stock", "finance", "financial", "dollar", "pay", "paid", "owe",
-	"credit card", "debit", "insurance", "subscription", "overdue",
-	"due date", "balance", "wallet", "refund", "charge", "afford",
-	"transaction", "monthly", "annual fee",
+// ParserKeyForProvider returns the CompletionParser registration name for this provider (from ProviderDef.Parser or DefaultParserName).
+func ParserKeyForProvider(providerKey string) string {
+	def := LookupProvider(providerKey)
+	if strings.TrimSpace(def.Parser) != "" {
+		return strings.TrimSpace(def.Parser)
+	}
+	return DefaultParserName
 }
 
-var GoogleKeywords = []string{
-	"google drive", "my drive", "google sheet", "google sheets",
-	"spreadsheet", "gmail", "my email", "check my email", "inbox",
-	"sent mail", "google doc", "google docs", "my files", "drive file",
+// ProviderBaseURL resolves the OpenAI-compatible API root for a provider key.
+// Unknown keys fall back to the default provider chain.
+// OLLAMA_BASE_URL overrides only when resolving DefaultProvider ("local").
+func ProviderBaseURL(providerKey string) string {
+	if providerKey == "" {
+		providerKey = DefaultProvider
+	}
+	if providerKey == DefaultProvider {
+		if u := os.Getenv("OLLAMA_BASE_URL"); strings.TrimSpace(u) != "" {
+			return normalizeAPIBase(u)
+		}
+	}
+	def := LookupProvider(providerKey)
+	if strings.TrimSpace(def.BaseURL) != "" {
+		return normalizeAPIBase(def.BaseURL)
+	}
+	if providerKey != DefaultProvider {
+		return ProviderBaseURL(DefaultProvider)
+	}
+	return normalizeAPIBase(OllamaBaseURL)
 }
 
-var EmailTerms = []string{"email", "gmail", "inbox", "mail", "sent mail"}
+func normalizeAPIBase(u string) string {
+	return strings.TrimRight(strings.TrimSpace(u), "/")
+}

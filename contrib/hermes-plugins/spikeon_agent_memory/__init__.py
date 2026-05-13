@@ -12,16 +12,27 @@ Config: ``$HERMES_HOME/spikeon_agent_memory.json`` (optional) plus env vars
 
 from __future__ import annotations
 
+import importlib.util
 import json
 import logging
 import threading
 import uuid
+from pathlib import Path
 from typing import Any, Dict, List
 
 from agent.memory_provider import MemoryProvider
 from tools.registry import tool_error
 
-from . import backend
+# Hermes loads user plugins as ``_hermes_user_memory.<name>`` without registering a
+# parent package, so relative ``from . import`` breaks. Load backend by path.
+_backend_path = Path(__file__).resolve().parent / "backend.py"
+_backend_spec = importlib.util.spec_from_file_location(
+    "spikeon_agent_memory_plugin.backend", _backend_path
+)
+if _backend_spec is None or _backend_spec.loader is None:
+    raise ImportError("spikeon_agent_memory: cannot load backend module")
+backend = importlib.util.module_from_spec(_backend_spec)
+_backend_spec.loader.exec_module(backend)
 
 logger = logging.getLogger(__name__)
 

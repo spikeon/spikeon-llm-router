@@ -11,6 +11,10 @@ ExecStart=%h/Dev/spikeon-llm-router/llm-router
 Environment=PORT=11435
 # Same default as internal/convlog; set explicitly so router logs match the systemd ingest service.
 Environment=CONV_INGEST_URL=http://127.0.0.1:3847/conv/log
+# Required for models using provider google_openai (e.g. orchestrator):
+#   systemctl --user edit spikeon-llm-router
+# and add under [Service]: Environment=GEMINI_API_KEY=...
+# Or use EnvironmentFile pointing at a file that sets GEMINI_API_KEY.
 Restart=on-failure
 RestartSec=5
 

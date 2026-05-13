@@ -19,7 +19,7 @@ Every request is classified by keyword matching and heuristics before a model is
 
 ### Caveman mode
 
-All prompts are prefixed with a system instruction that compresses responses to maximum signal and zero fluff: no articles, no pleasantries, symbols over words, lists over paragraphs. The prompt is defined in [`internal/config/config.go`](internal/config/config.go) as `CavemanSystemPrompt`.
+All prompts are prefixed with a system instruction that compresses responses to maximum signal and zero fluff: no articles, no pleasantries, symbols over words, lists over paragraphs. The prompt is defined in [`internal/config/caveman.go`](internal/config/caveman.go) as `CavemanSystemPrompt`.
 
 ### Frustration detection
 
@@ -31,7 +31,7 @@ Multi-part prompts are detected using a connector-word heuristic ("and then", "a
 
 ### ThinkFilter
 
-[Qwen3](https://ollama.com/library/qwen3) models emit chain-of-thought reasoning inside `<think>…</think>` tags before the actual response. The `ThinkFilter` in [`internal/ollama/think.go`](internal/ollama/think.go) is a stateful streaming filter that strips these tokens in real time so clients never see them. It handles tag boundaries that land mid-chunk.
+[Qwen3](https://ollama.com/library/qwen3) models emit chain-of-thought reasoning inside `<think>…</think>` tags before the actual response. The `ThinkFilter` in [`internal/providers/ollama/think.go`](internal/providers/ollama/think.go) is a stateful streaming filter that strips these tokens in real time so clients never see them. It handles tag boundaries that land mid-chunk.
 
 ### Google context injection
 
@@ -196,8 +196,9 @@ cmd/llm-router/       # binary entry point
 internal/
   config/             # model map, routing keywords, Caveman prompt
   router/             # prompt classification, frustration detection, decomposition, verification
-  ollama/             # raw Ollama HTTP client, SSE streaming, ThinkFilter
-  gemini/             # Gemini client, Google Drive/Sheets/Gmail context injection
+  providers/
+    ollama/           # raw OpenAI-compat / Ollama HTTP client, SSE streaming, ThinkFilter, completion parsers
+    gemini/           # Gemini client, Google Drive/Sheets/Gmail context injection
   convlog/            # fire-and-forget conversation log HTTP client
   handlers/           # HTTP handlers — one file per endpoint group
 deployments/          # systemd service unit, Docker Compose

@@ -9,7 +9,7 @@ import (
 
 	"github.com/google/generative-ai-go/genai"
 	"github.com/spikeon/llm-router/internal/config"
-	"github.com/spikeon/llm-router/internal/ollama"
+	"github.com/spikeon/llm-router/internal/providers/ollama"
 	"golang.org/x/oauth2"
 	"golang.org/x/oauth2/google"
 	"google.golang.org/api/drive/v3"
@@ -172,7 +172,7 @@ func BuildContext(prompt string) string {
 			parts = append(parts, s)
 		}
 	}
-	if containsAny(lower, config.EmailTerms) {
+	if containsAny(lower, config.EmailKeywords) {
 		if s := fetchGmail(prompt); s != "" {
 			parts = append(parts, s)
 		}
@@ -212,7 +212,7 @@ func newModel(apiKey, system string) (*genai.GenerativeModel, *genai.Client, err
 	if err != nil {
 		return nil, nil, err
 	}
-	m := client.GenerativeModel("gemini-2.0-flash")
+	m := client.GenerativeModel("gemini-3-flash-preview")
 	m.SystemInstruction = &genai.Content{Parts: []genai.Part{genai.Text(system)}}
 	return m, client, nil
 }

@@ -10,8 +10,8 @@ import (
 
 	"github.com/spikeon/llm-router/internal/config"
 	"github.com/spikeon/llm-router/internal/convlog"
-	gem "github.com/spikeon/llm-router/internal/gemini"
-	"github.com/spikeon/llm-router/internal/ollama"
+	gem "github.com/spikeon/llm-router/internal/providers/gemini"
+	"github.com/spikeon/llm-router/internal/providers/ollama"
 	"github.com/spikeon/llm-router/internal/router"
 )
 
@@ -157,7 +157,7 @@ func Chat(w http.ResponseWriter, r *http.Request) {
 
 	// Ollama local path
 	modelName := config.Models[modelKey].Name
-	params := ollama.Params{
+	params := ollama.ParamsForModel(modelKey, ollama.Params{
 		ModelName:      modelName,
 		Messages:       msgs,
 		Tools:          req.Tools,
@@ -168,7 +168,7 @@ func Chat(w http.ResponseWriter, r *http.Request) {
 		Stop:           req.Stop,
 		ResponseFormat: req.ResponseFormat,
 		Seed:           req.Seed,
-	}
+	})
 	if req.Stream {
 		handleOllamaStream(w, params, modelKey, lastPrompt, frustrated, t0)
 	} else {
@@ -245,7 +245,7 @@ func handleAgentModel(w http.ResponseWriter, r *http.Request, req ChatRequest, l
 		}
 	}
 
-	params := ollama.Params{
+	params := ollama.ParamsForModel(key, ollama.Params{
 		ModelName:      modelName,
 		Messages:       msgs,
 		Tools:          req.Tools,
@@ -257,7 +257,7 @@ func handleAgentModel(w http.ResponseWriter, r *http.Request, req ChatRequest, l
 		ResponseFormat: req.ResponseFormat,
 		Seed:           req.Seed,
 		NumCtx:         131072,
-	}
+	})
 
 	if req.Stream {
 		ollama.SSEHeaders(w)
@@ -267,6 +267,7 @@ func handleAgentModel(w http.ResponseWriter, r *http.Request, req ChatRequest, l
 		}
 		chunks, err := ollama.Stream(params)
 		if err != nil {
+			fmt.Printf("stream upstream error: %v\n", err)
 			fmt.Fprintf(w, "data: {\"error\":%q}\n\n", err.Error())
 			return
 		}
@@ -285,6 +286,7 @@ func handleAgentModel(w http.ResponseWriter, r *http.Request, req ChatRequest, l
 	t0 := time.Now()
 	resp, err := ollama.Chat(params)
 	if err != nil {
+		fmt.Printf("chat upstream error: %v\n", err)
 		http.Error(w, err.Error(), http.StatusBadGateway)
 		return
 	}
@@ -355,10 +357,10 @@ func runDecomposed(tasks []string, baseMessages []ollama.Msg, req ChatRequest) m
 			continue
 		}
 
-		resp, err := ollama.Chat(ollama.Params{
+		resp, err := ollama.Chat(ollama.ParamsForModel(modelKey, ollama.Params{
 			ModelName: modelName, Messages: taskMsgs,
 			Tools: req.Tools, ToolChoice: req.ToolChoice,
-		})
+		}))
 		elapsed := time.Since(t0)
 		if err != nil {
 			fmt.Printf("  ✗ error: %v\n", err)
@@ -485,6 +487,7 @@ func handleGeminiStream(w http.ResponseWriter, prompt, system string, history []
 func handleOllamaSync(w http.ResponseWriter, params ollama.Params, modelKey, modelName, prompt string, frustrated bool, t0 time.Time) {
 	resp, err := ollama.Chat(params)
 	if err != nil {
+		fmt.Printf("chat upstream error: %v\n", err)
 		http.Error(w, err.Error(), http.StatusBadGateway)
 		return
 	}
