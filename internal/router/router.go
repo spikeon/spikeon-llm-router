@@ -6,8 +6,8 @@ import (
 	"strings"
 	"unicode"
 
-	"github.com/spikeon/llm-router/config"
-	"github.com/spikeon/llm-router/ollama"
+	"github.com/spikeon/llm-router/internal/config"
+	"github.com/spikeon/llm-router/internal/ollama"
 )
 
 var (

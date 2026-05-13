@@ -8,11 +8,11 @@ import (
 	"strings"
 	"time"
 
-	"github.com/spikeon/llm-router/config"
-	"github.com/spikeon/llm-router/convlog"
-	gem "github.com/spikeon/llm-router/gemini"
-	"github.com/spikeon/llm-router/ollama"
-	"github.com/spikeon/llm-router/router"
+	"github.com/spikeon/llm-router/internal/config"
+	"github.com/spikeon/llm-router/internal/convlog"
+	gem "github.com/spikeon/llm-router/internal/gemini"
+	"github.com/spikeon/llm-router/internal/ollama"
+	"github.com/spikeon/llm-router/internal/router"
 )
 
 // ChatRequest is the incoming OpenAI-compatible request body.

@@ -5,7 +5,7 @@ import (
 	"net/http"
 	"os"
 
-	"github.com/spikeon/llm-router/handlers"
+	"github.com/spikeon/llm-router/internal/handlers"
 )
 
 func main() {

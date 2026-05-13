@@ -1,0 +1,14 @@
+[Unit]
+Description=Spikeon AI Router
+After=network.target
+
+[Service]
+Type=simple
+WorkingDirectory=/home/spikeon/Dev/spikeon-llm-router
+ExecStart=/home/spikeon/Dev/spikeon-llm-router/llm-router
+Environment=PORT=11435
+Restart=on-failure
+RestartSec=5
+
+[Install]
+WantedBy=default.target

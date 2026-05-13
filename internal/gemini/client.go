@@ -8,8 +8,8 @@ import (
 	"strings"
 
 	"github.com/google/generative-ai-go/genai"
-	"github.com/spikeon/llm-router/config"
-	"github.com/spikeon/llm-router/ollama"
+	"github.com/spikeon/llm-router/internal/config"
+	"github.com/spikeon/llm-router/internal/ollama"
 	"golang.org/x/oauth2"
 	"golang.org/x/oauth2/google"
 	"google.golang.org/api/drive/v3"

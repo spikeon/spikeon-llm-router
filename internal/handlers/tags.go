@@ -4,7 +4,7 @@ import (
 	"encoding/json"
 	"net/http"
 
-	"github.com/spikeon/llm-router/config"
+	"github.com/spikeon/llm-router/internal/config"
 )
 
 func ApiTags(w http.ResponseWriter, r *http.Request) {

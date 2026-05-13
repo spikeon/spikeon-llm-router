@@ -9,7 +9,7 @@ import (
 	"net/http"
 	"strings"
 
-	"github.com/spikeon/llm-router/config"
+	"github.com/spikeon/llm-router/internal/config"
 )
 
 // Msg is a single chat message.
