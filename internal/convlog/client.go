@@ -5,14 +5,22 @@ import (
 	"encoding/json"
 	"fmt"
 	"net/http"
+	"os"
 	"time"
 
 	"github.com/google/uuid"
 )
 
-const ingestURL = "http://127.0.0.1:3847/conv/log"
+const defaultIngestURL = "http://127.0.0.1:3847/conv/log"
 
 var httpClient = &http.Client{Timeout: 2 * time.Second}
+
+func ingestURL() string {
+	if u := os.Getenv("CONV_INGEST_URL"); u != "" {
+		return u
+	}
+	return defaultIngestURL
+}
 
 // Entry is one conversation log record.
 type Entry struct {
@@ -47,7 +55,7 @@ func Log(e Entry) {
 	if err != nil {
 		return
 	}
-	resp, err := httpClient.Post(ingestURL, "application/json", bytes.NewReader(body))
+	resp, err := httpClient.Post(ingestURL(), "application/json", bytes.NewReader(body))
 	if err != nil {
 		fmt.Printf("[conv_log] WARNING: %v\n", err)
 		return

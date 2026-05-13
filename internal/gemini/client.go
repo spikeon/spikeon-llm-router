@@ -24,12 +24,17 @@ var googleScopes = []string{
 	"https://www.googleapis.com/auth/gmail.readonly",
 }
 
-// GetAPIKey returns the Gemini API key from env or Hermes credential pool.
+// GetAPIKey returns the Gemini API key from GEMINI_API_KEY env, or a JSON
+// credential pool file at GEMINI_AUTH_JSON (defaults to ~/.hermes/auth.json).
 func GetAPIKey() string {
 	if k := os.Getenv("GEMINI_API_KEY"); k != "" {
 		return k
 	}
-	data, err := os.ReadFile(os.ExpandEnv("$HOME/.hermes/auth.json"))
+	authJSON := os.Getenv("GEMINI_AUTH_JSON")
+	if authJSON == "" {
+		authJSON = os.ExpandEnv("$HOME/.hermes/auth.json")
+	}
+	data, err := os.ReadFile(authJSON)
 	if err != nil {
 		return ""
 	}
@@ -47,7 +52,13 @@ func GetAPIKey() string {
 	return token
 }
 
-func tokenSource() (oauth2.TokenSource, error) {
+// resolveGooglePaths returns (tokenPath, credentialsPath).
+// Priority: GOOGLE_TOKEN_PATH / GOOGLE_CREDENTIALS_PATH env vars →
+// ~/.hermes/google_token.json (if present) → ~/.config/spikeon-router fallback.
+func resolveGooglePaths() (string, string) {
+	if t, s := os.Getenv("GOOGLE_TOKEN_PATH"), os.Getenv("GOOGLE_CREDENTIALS_PATH"); t != "" && s != "" {
+		return t, s
+	}
 	hermesToken := os.ExpandEnv("$HOME/.hermes/google_token.json")
 	hermesSecret := os.ExpandEnv("$HOME/.hermes/google_client_secret.json")
 	fallbackToken := os.ExpandEnv("$HOME/.config/spikeon-router/google_token.json")
@@ -60,6 +71,11 @@ func tokenSource() (oauth2.TokenSource, error) {
 	if _, err := os.Stat(hermesSecret); err == nil {
 		secretPath = hermesSecret
 	}
+	return tokenPath, secretPath
+}
+
+func tokenSource() (oauth2.TokenSource, error) {
+	tokenPath, secretPath := resolveGooglePaths()
 
 	secretData, err := os.ReadFile(secretPath)
 	if err != nil {
