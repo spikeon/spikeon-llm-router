@@ -48,7 +48,7 @@ Two model keys — `orchestrator` and `worker` — bypass the classifier entirel
 
 ### Conversation logging
 
-Every request and response (prompt, model used, latency, frustration flag, decomposition info, finish reason, tool calls) is posted asynchronously to [lancedb-agent-memory](https://github.com/spikeon/lancedb-agent-memory) via its HTTP ingest API. The logging is fire-and-forget: it never blocks or fails the main request. The ingest endpoint is configurable via `CONV_INGEST_URL`.
+Every request and response (prompt, model used, latency, frustration flag, decomposition info, finish reason, tool calls) is posted asynchronously to [spikeon-agent-memory](https://github.com/spikeon/spikeon-agent-memory) via its HTTP ingest API. The logging is fire-and-forget: it never blocks or fails the main request. The ingest endpoint is configurable via `CONV_INGEST_URL`.
 
 ### SSE streaming proxy
 
@@ -210,4 +210,4 @@ deployments/          # systemd service unit, Docker Compose
 - [googleapis/google-api-go-client](https://github.com/googleapis/google-api-go-client) — Drive, Sheets, Gmail
 - [golang.org/x/oauth2](https://pkg.go.dev/golang.org/x/oauth2) — Google OAuth2
 - [google/uuid](https://github.com/google/uuid) — conversation log IDs
-- [lancedb-agent-memory](https://github.com/spikeon/lancedb-agent-memory) — conversation log store (optional)
+- [spikeon-agent-memory](https://github.com/spikeon/spikeon-agent-memory) — conversation log store (optional)
