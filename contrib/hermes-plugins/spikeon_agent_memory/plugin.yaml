@@ -1,0 +1,8 @@
+name: spikeon_agent_memory
+version: 0.1.0
+description: >-
+  Local spikeon-agent-memory: router conversation log (SQLite) + semantic memories
+  (LanceDB via lancedb-connector). Mirrors MCP tools without a subprocess.
+hooks:
+  - prefetch
+  - sync_turn

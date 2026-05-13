@@ -1,12 +1,16 @@
 [Unit]
 Description=Spikeon AI Router
-After=network.target
+Documentation=https://github.com/spikeon/spikeon-agent-memory
+After=network-online.target spikeon-agent-memory.service
+Wants=spikeon-agent-memory.service
 
 [Service]
 Type=simple
 WorkingDirectory=%h/Dev/spikeon-llm-router
 ExecStart=%h/Dev/spikeon-llm-router/llm-router
 Environment=PORT=11435
+# Same default as internal/convlog; set explicitly so router logs match the systemd ingest service.
+Environment=CONV_INGEST_URL=http://127.0.0.1:3847/conv/log
 Restart=on-failure
 RestartSec=5
 

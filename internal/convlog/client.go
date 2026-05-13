@@ -4,6 +4,7 @@ import (
 	"bytes"
 	"encoding/json"
 	"fmt"
+	"io"
 	"net/http"
 	"os"
 	"time"
@@ -39,7 +40,7 @@ type Entry struct {
 	HasToolCalls bool    `json:"has_tool_calls"`
 }
 
-// Log sends an entry to the lancedb-agent-memory ingest endpoint synchronously.
+// Log sends an entry to the spikeon-agent-memory ingest endpoint synchronously.
 func Log(e Entry) {
 	if e.TaskIndex == 0 && e.TotalTasks == 0 {
 		e.TaskIndex = -1
@@ -60,7 +61,13 @@ func Log(e Entry) {
 		fmt.Printf("[conv_log] WARNING: %v\n", err)
 		return
 	}
-	resp.Body.Close()
+	defer resp.Body.Close()
+	if resp.StatusCode < 200 || resp.StatusCode >= 300 {
+		b, _ := io.ReadAll(io.LimitReader(resp.Body, 512))
+		fmt.Printf("[conv_log] WARNING: ingest %s → %d %s\n", ingestURL(), resp.StatusCode, string(b))
+		return
+	}
+	_, _ = io.Copy(io.Discard, resp.Body)
 }
 
 // LogAsync sends an entry in a background goroutine.

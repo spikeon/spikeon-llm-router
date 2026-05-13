@@ -80,6 +80,8 @@ systemctl --user enable --now spikeon-llm-router
 
 The unit file uses `%h` (systemd's home-directory specifier) so it works for any user. By default it expects the binary at `~/Dev/spikeon-llm-router/llm-router`. Edit `WorkingDirectory` and `ExecStart` in the unit file if your path differs, then `daemon-reload` again.
 
+The template **starts after** [spikeon-agent-memory](https://github.com/spikeon/spikeon-agent-memory) (`Wants=` / `After=`) so the `CONV_INGEST_URL` listener on `127.0.0.1:3847` is up before the router. Enable `spikeon-agent-memory.service` in user systemd as well.
+
 To add env vars (e.g. a Gemini key), use a drop-in:
 
 ```sh
@@ -212,3 +214,4 @@ deployments/          # systemd service unit, Docker Compose
 - [google/uuid](https://github.com/google/uuid) — conversation log IDs
 - [spikeon-agent-memory](https://github.com/spikeon/spikeon-agent-memory) — conversation log store (optional)
 - [lancedb-connector](https://github.com/spikeon/lancedb-connector) — LanceDB client used by spikeon-agent-memory
+- [Hermes Agent](https://hermes-agent.nousresearch.com/) memory provider — [`contrib/hermes-plugins/spikeon_agent_memory`](contrib/hermes-plugins/spikeon_agent_memory) (symlink into `$HERMES_HOME/plugins/`)
