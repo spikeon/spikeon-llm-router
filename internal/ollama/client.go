@@ -7,10 +7,18 @@ import (
 	"fmt"
 	"io"
 	"net/http"
+	"os"
 	"strings"
 
 	"github.com/spikeon/llm-router/internal/config"
 )
+
+func baseURL() string {
+	if u := os.Getenv("OLLAMA_BASE_URL"); u != "" {
+		return u
+	}
+	return config.OllamaBaseURL
+}
 
 // Msg is a single chat message.
 type Msg struct {
@@ -111,7 +119,7 @@ func post(p Params, stream bool) (*http.Response, error) {
 	if err != nil {
 		return nil, err
 	}
-	r, err := http.NewRequest("POST", config.OllamaBaseURL+"/chat/completions", bytes.NewReader(body))
+	r, err := http.NewRequest("POST", baseURL()+"/chat/completions", bytes.NewReader(body))
 	if err != nil {
 		return nil, err
 	}

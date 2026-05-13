@@ -1,0 +1,14 @@
+services:
+  llm-router:
+    build: ..
+    ports:
+      - "11435:11435"
+    environment:
+      PORT: 11435
+      # Required if using Gemini; omit if Ollama-only
+      # GEMINI_API_KEY: your-key-here
+      # Ollama runs on the host — use host.docker.internal on Mac/Windows,
+      # or set OLLAMA_BASE_URL=http://172.17.0.1:11434/v1 on Linux
+    extra_hosts:
+      - "host.docker.internal:host-gateway"
+    restart: unless-stopped

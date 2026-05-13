@@ -13,14 +13,77 @@ A local LLM routing proxy that sits in front of Ollama and Gemini. Clients speak
 ## Quick start
 
 ```sh
-# Build
 go build -o llm-router ./cmd/llm-router/
-
-# Run (default port 11435)
 PORT=11435 ./llm-router
 ```
 
 Requires a local [Ollama](https://ollama.com) instance at `http://localhost:11434`.
+
+## Running as a systemd user service
+
+```sh
+# Copy the unit file
+cp deployments/spikeon-llm-router.service ~/.config/systemd/user/
+
+# Reload and start
+systemctl --user daemon-reload
+systemctl --user enable --now spikeon-llm-router
+```
+
+The unit file uses `%h` (systemd's home-directory specifier) so it works for any user. By default it expects the binary at `~/Dev/spikeon-llm-router/llm-router`. Edit `WorkingDirectory` and `ExecStart` in the unit file if your path differs, then `daemon-reload` again.
+
+To add env vars (e.g. a Gemini key):
+
+```ini
+[Service]
+Environment=PORT=11435
+Environment=GEMINI_API_KEY=your-key-here
+```
+
+Or use a drop-in:
+
+```sh
+systemctl --user edit spikeon-llm-router
+```
+
+## Running in Docker
+
+### Build and run
+
+```sh
+docker build -t llm-router .
+docker run -p 11435:11435 \
+  -e OLLAMA_BASE_URL=http://host.docker.internal:11434/v1 \
+  llm-router
+```
+
+`host.docker.internal` resolves to the host on Mac and Windows automatically. On Linux, pass `--add-host=host.docker.internal:host-gateway` (already included in the compose file).
+
+### Docker Compose
+
+```sh
+cd deployments
+docker compose up -d
+```
+
+Edit `deployments/docker-compose.yml` to add environment variables before starting:
+
+```yaml
+environment:
+  PORT: 11435
+  OLLAMA_BASE_URL: http://host.docker.internal:11434/v1
+  GEMINI_API_KEY: your-key-here
+```
+
+For Google Drive/Gmail context, mount your credentials into the container:
+
+```yaml
+volumes:
+  - ~/.config/spikeon-router:/config
+environment:
+  GOOGLE_TOKEN_PATH: /config/google_token.json
+  GOOGLE_CREDENTIALS_PATH: /config/google_credentials.json
+```
 
 ## Model map
 
@@ -55,6 +118,7 @@ All configuration is via environment variables:
 | Variable | Default | Description |
 |---|---|---|
 | `PORT` | `11435` | Listen port |
+| `OLLAMA_BASE_URL` | `http://localhost:11434/v1` | Ollama API base URL |
 | `GEMINI_API_KEY` | — | Gemini API key (preferred) |
 | `GEMINI_AUTH_JSON` | `~/.hermes/auth.json` | Path to JSON credential pool for Gemini key |
 | `GOOGLE_TOKEN_PATH` | `~/.config/spikeon-router/google_token.json` | OAuth2 token file for Drive/Gmail |
@@ -78,13 +142,5 @@ internal/
   gemini/             # Gemini client + Google Drive/Gmail context
   convlog/            # fire-and-forget conversation log client
   handlers/           # HTTP handlers (one file per endpoint)
-deployments/          # systemd service unit
-```
-
-## Running as a systemd service
-
-```sh
-cp deployments/spikeon-llm-router.service ~/.config/systemd/user/
-systemctl --user daemon-reload
-systemctl --user enable --now spikeon-llm-router.service
+deployments/          # systemd service unit + Docker Compose
 ```
