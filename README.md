@@ -211,3 +211,4 @@ deployments/          # systemd service unit, Docker Compose
 - [golang.org/x/oauth2](https://pkg.go.dev/golang.org/x/oauth2) — Google OAuth2
 - [google/uuid](https://github.com/google/uuid) — conversation log IDs
 - [spikeon-agent-memory](https://github.com/spikeon/spikeon-agent-memory) — conversation log store (optional)
+- [lancedb-connector](https://github.com/spikeon/lancedb-connector) — LanceDB client used by spikeon-agent-memory
